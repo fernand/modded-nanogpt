@@ -364,7 +364,6 @@ if __name__ == "__main__":
                     val_loss += loss
                 dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
                 val_loss /= args.val_max_steps
-            # log to console and to file
             print0(f"val loss {val_loss}")
             if master_process and logfile is not None:
                 with open(logfile, "a") as f:
