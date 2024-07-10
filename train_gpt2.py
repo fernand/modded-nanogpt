@@ -54,7 +54,6 @@ def rmsnorm(x0, eps=1e-6):
     return x.type_as(x0)
 
 class CausalSelfAttention(nn.Module):
-
     def __init__(self, config):
         super().__init__()
         self.n_head = config.n_head
@@ -85,7 +84,6 @@ class CausalSelfAttention(nn.Module):
         return y
 
 class MLP(nn.Module):
-
     def __init__(self, config):
         super().__init__()
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
@@ -98,7 +96,6 @@ class MLP(nn.Module):
         return x
 
 class Block(nn.Module):
-
     def __init__(self, config):
         super().__init__()
         self.attn = CausalSelfAttention(config)
@@ -121,7 +118,6 @@ class GPTConfig:
     n_embd: int = 768
 
 class GPT(nn.Module):
-
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -276,13 +272,12 @@ if __name__ == "__main__":
     parser.add_argument("--save_every", type=int, default=5000, help="every how many steps to save the checkpoint")
     args = parser.parse_args()
 
-    # args error checking and convenience variables
     B, T = args.batch_size, args.sequence_length
     assert args.model in {"d12", "d24", "d36", "d48"}
 
     # set up DDP (distributed data parallel). torchrun sets this env variable
     # use of DDP atm demands CUDA, we set the device appropriately according to rank
-    assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
+    assert torch.cuda.is_available(), "CUDA not available"
     init_process_group(backend='nccl')
     ddp_rank = int(os.environ['RANK'])
     ddp_local_rank = int(os.environ['LOCAL_RANK'])
@@ -290,7 +285,6 @@ if __name__ == "__main__":
     device = f'cuda:{ddp_local_rank}'
     torch.cuda.set_device(device)
     master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-    print(f"using device: {device}")
 
     if master_process:
         tokens_per_iter = args.gradient_accumulation_steps * ddp_world_size * args.batch_size * args.sequence_length
@@ -298,17 +292,14 @@ if __name__ == "__main__":
 
     tokens_per_fwdbwd = B * T * ddp_world_size
 
-    # set up a context manager following the desired dtype and device
     ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
 
-    # load tokens
     train_loader = DistributedDataLoader(args.input_bin, B, T, ddp_rank, ddp_world_size)
     val_loader = None
     if args.input_val_bin:
         val_loader = DistributedDataLoader(args.input_val_bin, B, T, ddp_rank, ddp_world_size)
     x, y = train_loader.next_batch()
 
-    # init the model from scratch
     num_vocab = 50257
     model_config = {
         "d12": GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=12, n_embd=768),
@@ -321,19 +312,15 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('high')
     if hasattr(config, "coordinate_descent_tuning"):
         config.coordinate_descent_tuning = True # suggested by @Chillee
-    print0("compiling the model...")
     model = torch.compile(model)
 
-    # here we wrap model into DDP container
     model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module # always contains the "raw" unwrapped model
 
-    # init the optimizer
     optimizer = raw_model.configure_optimizers(weight_decay=args.weight_decay,
                                                learning_rate=args.learning_rate, betas=(0.9, 0.95),
                                                device_type=device)
 
-    # learning rate decay scheduler (linear warmup and warmdown)
     def get_lr(it):
         assert it <= args.num_iterations
         # 1) linear warmup for warmup_iters steps
@@ -360,7 +347,7 @@ if __name__ == "__main__":
 
     timings = []
     for step in range(args.num_iterations + 1):
-        t0 = time.time()
+        t0 = time.perf_counter()
         last_step = (step == args.num_iterations)
 
         # once in a while evaluate the validation dataset
@@ -392,38 +379,33 @@ if __name__ == "__main__":
 
         # --------------- TRAINING SECTION BEGIN -----------------
         model.train()
+        train_loss = torch.zeros(1).to(device)
         for micro_step in range(args.gradient_accumulation_steps):
             # In DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but
             # this bloats the code and forces us to repeat code
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == args.gradient_accumulation_steps - 1)
-            # forward pass
             with ctx:
                 _, loss = model(x, y, return_logits=False)
-                train_loss = loss.detach() / args.gradient_accumulation_steps
-            # advance the dataset for the next batch
+                train_loss += loss.detach() / args.gradient_accumulation_steps
             x, y = train_loader.next_batch()
-            # backward pass
             loss.backward()
 
-        # determine and set the learning rate for this iteration
         lr = get_lr(step)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-        # step the optimizer
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
         # --------------- TRAINING SECTION END -------------------
         # everything that follows now is just diagnostics, prints, logging, etc.
 
         torch.cuda.synchronize()
-        # time and print
-        t1 = time.time()
+        t1 = time.perf_counter()
         # the 0th iteration is often an outlier (much slower) => skip logging it
         tokens_per_second = ddp_world_size * B * T / (t1-t0)
         dist.all_reduce(train_loss, op=dist.ReduceOp.AVG)
-        lossf = train_loss.item() # keep track of the mean loss
+        lossf = train_loss.item() # Mean loss across GPUs and micro steps
         print0(f"step {step+1:4d}/{args.num_iterations} | train loss {lossf:.6f} | lr {lr:.2e} | ({(t1-t0)*1000:.2f} ms | {tokens_per_second:.0f} tok/s)")
         # log to logile
         if master_process and logfile is not None:
@@ -444,13 +426,9 @@ if __name__ == "__main__":
     print0(f"final {len(timings)} iters avg: {np.mean(timings)*1000:.3f}ms")
     print0(f"peak memory consumption: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB")
 
-    # -------------------------------------------------------------------------
-
     if master_process:
         log = dict(model=raw_model.state_dict(), code=code, args=args.__dict__)
         os.makedirs('logs/%s' % run_id, exist_ok=True)
         torch.save(log, 'logs/%s/final.pt' % run_id)
 
-    # -------------------------------------------------------------------------
-    # clean up nice
     destroy_process_group()
