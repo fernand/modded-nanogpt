@@ -15,18 +15,17 @@ example doc to highlight the structure of the dataset:
   "token_count": 594
 }
 """
-import os
 import argparse
+import os
 import multiprocessing as mp
 import numpy as np
-import tiktoken
-# from huggingface_hub import snapshot_download
-from datasets import load_dataset
-from tqdm import tqdm
-import argparse
+
 import numpy as np
+import tiktoken
+from datasets import load_dataset
+
 def write_datafile(filename, toks):
-    """ 
+    """
     Saves token data as a .bin file, for reading in C.
     - First comes a header with 256 int32s
     - The tokens follow, each as a uint16
@@ -92,29 +91,21 @@ with mp.Pool(nprocs) as pool:
     # preallocate buffer to hold current shard
     all_tokens_np = np.empty((args.shard_size,), dtype=np.uint16)
     token_count = 0
-    progress_bar = None
     for tokens in pool.imap(tokenize, fw, chunksize=16):
-
         # is there enough space in the current shard for the new tokens?
         if token_count + len(tokens) < args.shard_size:
             # simply append tokens to current shard
             all_tokens_np[token_count:token_count+len(tokens)] = tokens
             token_count += len(tokens)
-            # update progress bar
-            if progress_bar is None:
-                progress_bar = tqdm(total=args.shard_size, unit="tokens", desc=f"Shard {shard_index}")
-            progress_bar.update(len(tokens))
         else:
             # write the current shard and start a new one
             split = "val" if shard_index == 0 else "train"
             filename = os.path.join(DATA_CACHE_DIR, f"fineweb_{split}_{shard_index:06d}.bin")
             # split the document into whatever fits in this shard; the remainder goes to next one
             remainder = args.shard_size - token_count
-            progress_bar.update(remainder)
             all_tokens_np[token_count:token_count+remainder] = tokens[:remainder]
             write_datafile(filename, all_tokens_np)
             shard_index += 1
-            progress_bar = None
             # populate the next shard with the leftovers of the current doc
             all_tokens_np[0:len(tokens)-remainder] = tokens[remainder:]
             token_count = len(tokens)-remainder

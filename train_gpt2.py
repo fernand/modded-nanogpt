@@ -261,6 +261,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="d12", help="d12|d24|d36|d48")
     # token layout for each step of the optimization
     parser.add_argument("--batch_size", type=int, default=4, help="batch size, in units of #batch dimensions")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="how many batches to accumulate per node before doing an optimizer step")
     parser.add_argument("--sequence_length", type=int, default=64, help="sequence length")
     # workload (number of steps)
     parser.add_argument("--num_iterations", type=int, default=10, help="number of iterations to run")
@@ -291,6 +292,10 @@ if __name__ == "__main__":
     master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
     print(f"using device: {device}")
 
+    if master_process:
+        tokens_per_iter = args.gradient_accumulation_steps * ddp_world_size * args.batch_size * args.sequence_length
+        print(f"tokens per optimizer step will be: {tokens_per_iter:,}")
+
     tokens_per_fwdbwd = B * T * ddp_world_size
 
     # set up a context manager following the desired dtype and device
@@ -313,6 +318,7 @@ if __name__ == "__main__":
     }[args.model]
     model = GPT(model_config)
     model = model.train().cuda()
+    torch.set_float32_matmul_precision('high')
     if hasattr(config, "coordinate_descent_tuning"):
         config.coordinate_descent_tuning = True # suggested by @Chillee
     print0("compiling the model...")
@@ -386,14 +392,21 @@ if __name__ == "__main__":
 
         # --------------- TRAINING SECTION BEGIN -----------------
         model.train()
-        # forward pass
-        with ctx:
-            _, loss = model(x, y, return_logits=False)
-            train_loss = loss.detach()
-        # advance the dataset for the next batch
-        x, y = train_loader.next_batch()
-        # backward pass
-        loss.backward()
+        for micro_step in range(args.gradient_accumulation_steps):
+            # In DDP training we only need to sync gradients at the last micro step.
+            # the official way to do this is with model.no_sync() context manager, but
+            # this bloats the code and forces us to repeat code
+            # looking at the source of that context manager, it just toggles this variable
+            model.require_backward_grad_sync = (micro_step == args.gradient_accumulation_steps - 1)
+            # forward pass
+            with ctx:
+                _, loss = model(x, y, return_logits=False)
+                train_loss = loss.detach() / args.gradient_accumulation_steps
+            # advance the dataset for the next batch
+            x, y = train_loader.next_batch()
+            # backward pass
+            loss.backward()
+
         # determine and set the learning rate for this iteration
         lr = get_lr(step)
         for param_group in optimizer.param_groups:
