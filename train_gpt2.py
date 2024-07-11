@@ -209,6 +209,9 @@ class DistributedDataLoader:
         self.ntok_total = ntok_total
         print0(f"DataLoader: total number of tokens: {ntok_total:,} across {len(self.files)} files")
 
+        self.whitelisted_tokens = np.load("topk.npy")
+        self.unk = 5025
+
         # kick things off
         self.reset()
 
@@ -216,11 +219,15 @@ class DistributedDataLoader:
         self.current_shard = 0
         self.current_position = self.process_rank * self.B * self.T
         self.tokens = _load_data_shard(self.files[self.current_shard])
+        mask = np.isin(self.tokens, self.whitelisted_tokens, invert=True)
+        self.tokens = np.where(mask, 5025, self.tokens)
 
     def advance(self): # advance to next data shard
         self.current_shard = (self.current_shard + 1) % len(self.files)
         self.current_position = self.process_rank * self.B * self.T
         self.tokens = _load_data_shard(self.files[self.current_shard])
+        mask = np.isin(self.tokens, self.whitelisted_tokens, invert=True)
+        self.tokens = np.where(mask, 5025, self.tokens)
 
     def next_batch(self):
         B = self.B
@@ -299,6 +306,7 @@ if __name__ == "__main__":
     if args.input_val_bin:
         val_loader = DistributedDataLoader(args.input_val_bin, B, T, ddp_rank, ddp_world_size)
     x, y = train_loader.next_batch()
+
 
     num_vocab = 50257
     model_config = {

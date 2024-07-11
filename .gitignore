@@ -3,3 +3,5 @@ pylog*/
 *.pyc
 *.npy
 *.txt
+*.pt
+*.png
