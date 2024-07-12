@@ -7,12 +7,13 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
-from torch import nn
+from torch import nn, einsum
 import torch.distributed as dist
 import torch.nn.functional as F
 import torch._inductor.config as config
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
+from einops import rearrange
 
 with open(sys.argv[0]) as f:
     code = f.read()
@@ -86,8 +87,8 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -95,16 +96,79 @@ class MLP(nn.Module):
         x = self.c_proj(x)
         return x
 
+def init_(t):
+    std = 1. / math.sqrt(t.shape[-1])
+    return nn.init.normal_(t, mean=0, std=std)
+
+class PKM(nn.Module):
+    def __init__(self, dim, num_keys=512, heads=4, topk=32, dim_head=64):
+        super().__init__()
+        self.topk = topk
+        self.heads = heads
+        self.num_keys = num_keys
+
+        dim_query = dim_head * heads * 2
+        self.to_queries = nn.Linear(dim, dim_query, bias = False)
+        self.keys = nn.Parameter(torch.zeros(heads, num_keys, 2, dim_head))
+        init_(self.keys)
+
+        values = nn.EmbeddingBag(num_keys ** 2, dim, mode = 'sum')
+        self.values = values
+        init_(values.weight)
+
+    def forward(self, x):
+        b, t, h = *x.shape[:2], self.heads
+        queries = self.to_queries(x)
+        queries = rmsnorm(queries)
+
+        # split out query heads
+        queries = rearrange(queries, 'b t (p h d) -> (b p h) t d', p = 2, h = h)
+        # ready queries
+        queries = rearrange(queries, '(b p h) t d -> p b t h d', p = 2, h = h)
+        # similarity to keys
+        dots = einsum('p b t h d, h n p d -> b t h p n', queries, self.keys)
+        # topk scores
+        scores, indices = dots.topk(k = self.topk, dim = -1)
+        # scores are factorized
+        (scores_x, scores_y), (indices_x, indices_y) = map(lambda t: t.chunk(2, dim=3), (scores, indices))
+
+        all_scores = rearrange((
+            rearrange(scores_x, '... k -> ... k 1') +
+            rearrange(scores_y, '... k -> ... 1 k')
+        ), 'b t h ... -> b t h (...)')
+
+        all_indices = rearrange((
+            rearrange(indices_x, '... k -> ... k 1') * self.num_keys +
+            rearrange(indices_y, '... k -> ... 1 k')
+        ), 'b t h ... -> b t h (...)')
+
+        final_topk, final_indices = all_scores.topk(self.topk, dim=-1)
+        value_indices = all_indices.gather(-1, final_indices)
+
+        attn = final_topk.softmax(dim=-1)
+        value_indices, attn = map(lambda t: rearrange(t, 'b t h k -> (b t) (h k)'), (value_indices, attn))
+
+        out = self.values(value_indices, per_sample_weights=attn)
+        return rearrange(out, '(b t) d -> b t d', b = b)
+
+BLOCK_IDX_TO_REPLACE = 5
 class Block(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, block_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config)
-        self.mlp = MLP(config)
+        self.block_idx = block_idx
+        if block_idx == BLOCK_IDX_TO_REPLACE:
+            self.pkm = PKM(config.n_embd)
+        else:
+            self.mlp = MLP(config)
         self.attn_scale = (1 / math.sqrt(2 * config.n_layer))
 
     def forward(self, x):
         x = x + self.attn_scale * self.attn(rmsnorm(x))
-        x = x + self.mlp(rmsnorm(x))
+        if self.block_idx == BLOCK_IDX_TO_REPLACE:
+            x = x + self.pkm(rmsnorm(x))
+        else:
+            x = x + self.mlp(rmsnorm(x))
         return x
 
 # -----------------------------------------------------------------------------
@@ -124,7 +188,7 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            h = nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
@@ -309,6 +373,9 @@ if __name__ == "__main__":
         "d48": GPTConfig(vocab_size=num_vocab, n_layer=48, n_head=25, n_embd=1600),
     }[args.model]
     model = GPT(model_config)
+    if master_process:
+        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print('Num parameters', f'{num_params:,}')
     model = model.train().cuda()
     torch.set_float32_matmul_precision('high')
     if hasattr(config, "coordinate_descent_tuning"):
