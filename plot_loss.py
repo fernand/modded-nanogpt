@@ -5,6 +5,8 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/e9067b07-f2e0-4b0d-bfbe-ca25a22e60f0.log',
+        'pylog_pkm/874f0862-c1ee-4e36-8568-cbd5f6afc915.log',
+        'pylog_pkm/577f2b52-7bb4-4e99-9f9d-de608dcfc275.log',
     ]
     plot_eval = False
     xs, ys = [], []
@@ -21,7 +23,8 @@ if __name__ == '__main__':
 
     plt.figure(figsize=(10, 6))
     for x, y in zip(xs, ys):
-        plt.plot(x[500:], y[500:])
+        # plt.plot(x[500:], y[500:])
+        plt.plot(x, y)
     plt.xlabel('MTokens')
     plt.ylabel('Loss')
     plt.tight_layout()
