@@ -110,7 +110,7 @@ class PKM(nn.Module):
         self.dim_query = dim_head * heads * 2
         self.to_queries = nn.Linear(dim, self.dim_query, bias = False)
         # TODO: deal with cheating across the seq len.
-        self.norm = nn.BatchNorm1d(1024*self.dim_query)
+        self.norm = nn.BatchNorm1d(self.dim_query)
         self.keys = nn.Parameter(torch.zeros(heads, num_keys, 2, dim_head))
         init_(self.keys)
 
@@ -120,7 +120,7 @@ class PKM(nn.Module):
 
     def forward(self, x):
         b, t, h = *x.shape[:2], self.heads
-        queries = self.norm(self.to_queries(x).view(b, t * self.dim_query)).view(b, t, self.dim_query)
+        queries = self.norm(self.to_queries(x).reshape(-1, self.dim_query)).reshape(b, t, self.dim_query)
 
         # split out query heads
         queries = rearrange(queries, 'b t (p h d) -> (b p h) t d', p = 2, h = h)
