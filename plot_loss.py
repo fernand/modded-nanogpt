@@ -6,6 +6,7 @@ if __name__ == '__main__':
     logfiles = [
         'pylog124M/e9067b07-f2e0-4b0d-bfbe-ca25a22e60f0.log',
         'pylog_primer/0c46fd85-4b7e-4431-b427-c908fc5d14d7.log',
+        'pylog_primer/b75523b5-def9-4fa5-9df5-261845e7fa07.log',
     ]
     plot_eval = False
     xs, ys = [], []

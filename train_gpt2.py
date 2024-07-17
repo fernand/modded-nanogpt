@@ -5,6 +5,7 @@ import math
 import glob
 from dataclasses import dataclass
 
+import optimi
 import numpy as np
 import torch
 from torch import nn
@@ -23,7 +24,7 @@ with open(sys.argv[0]) as f:
 class Rotary(torch.nn.Module):
     def __init__(self, dim, base=10000):
         super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).bfloat16() / dim))
         self.register_buffer("inv_freq", inv_freq)
         self.seq_len_cached = None
         self.cos_cached = None
@@ -61,9 +62,9 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(self.n_embd, 3 * self.n_embd, bias=False)
+        self.c_attn = nn.Linear(self.n_embd, 3 * self.n_embd, bias=False, dtype=torch.bfloat16)
         # output projection
-        self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False, dtype=torch.bfloat16)
         self.rotary = Rotary(self.head_dim)
 
     def forward(self, x):
@@ -84,8 +85,8 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False, dtype=torch.bfloat16)
+        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False, dtype=torch.bfloat16)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -119,10 +120,10 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wte = nn.Embedding(config.vocab_size, config.n_embd, dtype=torch.bfloat16),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False, dtype=torch.bfloat16)
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
 
     def forward(self, idx, targets=None, return_logits=True):
@@ -147,7 +148,7 @@ class GPT(nn.Module):
         return logits, loss
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=betas)
+        optimizer = optimi.AdamW(self.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=betas, gradient_release=True)
         return optimizer
 
 # -----------------------------------------------------------------------------
@@ -283,8 +284,6 @@ if __name__ == "__main__":
 
     tokens_per_fwdbwd = B * T * ddp_world_size
 
-    ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
-
     train_loader = DistributedDataLoader(args.input_bin, B, T, ddp_rank, ddp_world_size)
     val_loader = None
     if args.input_val_bin:
@@ -314,6 +313,7 @@ if __name__ == "__main__":
     optimizer = raw_model.configure_optimizers(weight_decay=args.weight_decay,
                                                learning_rate=args.learning_rate, betas=(0.9, 0.95),
                                                device_type=device)
+    optimi.prepare_for_gradient_release(model, optimizer)
 
     def get_lr(it):
         assert it <= args.num_iterations
@@ -378,10 +378,11 @@ if __name__ == "__main__":
             # the official way to do this is with model.no_sync() context manager, but
             # this bloats the code and forces us to repeat code
             # looking at the source of that context manager, it just toggles this variable
-            model.require_backward_grad_sync = (micro_step == args.gradient_accumulation_steps - 1)
-            with ctx:
-                _, loss = model(x, y, return_logits=False)
-                train_loss += loss.detach() / args.gradient_accumulation_steps
+            is_last_micro_step = (micro_step == args.gradient_accumulation_steps - 1)
+            model.require_backward_grad_sync = is_last_micro_step
+            optimizer.optimizer_accumulation = not is_last_micro_step
+            _, loss = model(x, y, return_logits=False)
+            train_loss += loss.detach() / args.gradient_accumulation_steps
             x, y = train_loader.next_batch()
             loss.backward()
 
