@@ -22,8 +22,8 @@ if __name__ == '__main__':
 
     plt.figure(figsize=(10, 6))
     for x, y in zip(xs, ys):
-        # plt.plot(x[500:], y[500:])
-        plt.plot(x, y)
+        plt.plot(x[500:], y[500:])
+        # plt.plot(x, y)
     plt.xlabel('MTokens')
     plt.ylabel('Loss')
     plt.tight_layout()

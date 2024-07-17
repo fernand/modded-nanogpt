@@ -118,8 +118,6 @@ class GPTConfig:
 class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.config = config
-
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
@@ -128,9 +126,7 @@ class GPT(nn.Module):
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
 
     def forward(self, idx, targets=None, return_logits=True):
-        # forward the GPT model itself
         x = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-
         for block in self.transformer.h:
             x = block(x)
         x = rmsnorm(x)
