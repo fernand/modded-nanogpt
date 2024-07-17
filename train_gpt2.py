@@ -24,7 +24,7 @@ with open(sys.argv[0]) as f:
 class Rotary(torch.nn.Module):
     def __init__(self, dim, base=10000):
         super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).bfloat16() / dim))
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer("inv_freq", inv_freq)
         self.seq_len_cached = None
         self.cos_cached = None
@@ -47,7 +47,7 @@ def apply_rotary_emb(x, cos, sin):
     x2 = x[..., d:]
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
-    return torch.cat([y1, y2], 3)
+    return torch.cat([y1, y2], 3).bfloat16()
 
 def rmsnorm(x0, eps=1e-6):
     x = x0.float()
