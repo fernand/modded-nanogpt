@@ -65,9 +65,6 @@ class CausalSelfAttention(nn.Module):
         # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
-        self.conv_q = nn.Conv1d(self.n_embd, self.n_embd, kernel_size=3, padding=2, groups=self.n_embd)
-        self.conv_k = nn.Conv1d(self.n_embd, self.n_embd, kernel_size=3, padding=2, groups=self.n_embd)
-        self.conv_v = nn.Conv1d(self.n_embd, self.n_embd, kernel_size=3, padding=2, groups=self.n_embd)
 
     def causal_conv1d(self, x, conv):
         # x is B, C, T
@@ -77,9 +74,6 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.size() # B, T, C
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
-        k = self.causal_conv1d(k.transpose(1, 2), self.conv_k).transpose(1, 2)
-        v = self.causal_conv1d(v.transpose(1, 2), self.conv_v).transpose(1, 2)
-        q = self.causal_conv1d(q.transpose(1, 2), self.conv_q).transpose(1, 2)
         k = k.view(B, T, self.n_head, self.head_dim)
         q = q.view(B, T, self.n_head, self.head_dim)
         v = v.view(B, T, self.n_head, self.head_dim)
@@ -99,7 +93,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = F.relu(x)**2.0
+        x = torch.square(F.relu(x))
         x = self.c_proj(x)
         return x
 
