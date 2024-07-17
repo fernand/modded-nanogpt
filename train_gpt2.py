@@ -66,10 +66,6 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
 
-    def causal_conv1d(self, x, conv):
-        # x is B, C, T
-        return conv(x)[:, :, :-2]
-
     def forward(self, x):
         B, T, C = x.size() # B, T, C
         qkv = self.c_attn(x)
