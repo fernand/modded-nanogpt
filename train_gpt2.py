@@ -65,12 +65,21 @@ class CausalSelfAttention(nn.Module):
         # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
+        self.conv_q = nn.Conv1d(self.n_embd, self.n_embd, kernel_size=3, padding=2, groups=self.n_embd)
+        self.conv_k = nn.Conv1d(self.n_embd, self.n_embd, kernel_size=3, padding=2, groups=self.n_embd)
+        self.conv_v = nn.Conv1d(self.n_embd, self.n_embd, kernel_size=3, padding=2, groups=self.n_embd)
+
+    def causal_conv1d(self, x, conv):
+        # x is B, C, T
+        return conv(x)[:, :, :-2]
 
     def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        B, T, C = x.size() # B, T, C
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
+        k = self.causal_conv1d(k.transpose(1, 2), self.conv_k).transpose(1, 2)
+        v = self.causal_conv1d(v.transpose(1, 2), self.conv_v).transpose(1, 2)
+        q = self.causal_conv1d(q.transpose(1, 2), self.conv_q).transpose(1, 2)
         k = k.view(B, T, self.n_head, self.head_dim)
         q = q.view(B, T, self.n_head, self.head_dim)
         v = v.view(B, T, self.n_head, self.head_dim)
@@ -79,7 +88,6 @@ class CausalSelfAttention(nn.Module):
         k = apply_rotary_emb(k, cos, sin)
         y = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-        # output projection
         y = self.c_proj(y)
         return y
 
@@ -91,21 +99,21 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = F.gelu(x)
+        x = F.relu(x)**2.0
         x = self.c_proj(x)
         return x
 
 class Block(nn.Module):
-    def __init__(self, config, block_idx):
+    def __init__(self, config):
         super().__init__()
         self.attn = CausalSelfAttention(config)
-        self.block_idx = block_idx
         self.mlp = MLP(config)
         self.attn_scale = (1 / math.sqrt(2 * config.n_layer))
 
     def forward(self, x):
         x = x + self.attn_scale * self.attn(rmsnorm(x))
         x = x + self.mlp(rmsnorm(x))
+        return x
 
 # -----------------------------------------------------------------------------
 # The main GPT-2 model
@@ -124,7 +132,7 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            h = nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
@@ -296,7 +304,6 @@ if __name__ == "__main__":
     if args.input_val_bin:
         val_loader = DistributedDataLoader(args.input_val_bin, B, T, ddp_rank, ddp_world_size)
     x, y = train_loader.next_batch()
-
 
     num_vocab = 50257
     model_config = {
