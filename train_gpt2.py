@@ -307,7 +307,6 @@ if __name__ == "__main__":
         val_loader = DistributedDataLoader(args.input_val_bin, B, T, ddp_rank, ddp_world_size)
     x, y = train_loader.next_batch()
 
-
     num_vocab = 50257
     model_config = {
         "d12": GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=12, n_embd=768),
