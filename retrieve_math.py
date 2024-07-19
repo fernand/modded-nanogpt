@@ -17,7 +17,7 @@ def pooling(outputs: torch.Tensor, inputs: Dict,  strategy: str = 'cls') -> np.n
 
 model_id = 'mixedbread-ai/mxbai-embed-large-v1'
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModel.from_pretrained(model_id).cuda()
+model = AutoModel.from_pretrained(model_id).bfloat16().cuda()
 
 docs = [
     "Tom has a red marble, a green marble, a blue marble, and three identical yellow marbles.  How many different groups of two marbles can Tom choose?",
@@ -31,7 +31,7 @@ docs = [
 inputs = tokenizer(docs, padding=True, return_tensors='pt')
 for k, v in inputs.items():
     inputs[k] = v.cuda()
-outputs = model(**inputs).last_hidden_state
+outputs = model(**inputs).last_hidden_state.float()
 embeddings = pooling(outputs, inputs, 'mean')
 
 mask = [False, True, True, True, True, True]
