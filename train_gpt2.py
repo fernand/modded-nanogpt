@@ -17,9 +17,6 @@ from torch.distributed import init_process_group, destroy_process_group
 with open(sys.argv[0]) as f:
     code = f.read()
 
-# -----------------------------------------------------------------------------
-# PyTorch nn.Module definitions for the GPT-2 model
-
 class Rotary(torch.nn.Module):
     def __init__(self, dim, base=10000):
         super().__init__()
@@ -60,15 +57,12 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
-        # key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(self.n_embd, 3 * self.n_embd, bias=False)
-        # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
 
     def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        B, T, C = x.size()
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, self.head_dim)
@@ -78,16 +72,15 @@ class CausalSelfAttention(nn.Module):
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
         y = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=True)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-        # output projection
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.c_proj(y)
         return y
 
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -106,9 +99,6 @@ class Block(nn.Module):
         x = x + self.attn_scale * self.attn(rmsnorm(x))
         x = x + self.mlp(rmsnorm(x))
         return x
-
-# -----------------------------------------------------------------------------
-# The main GPT-2 model
 
 @dataclass
 class GPTConfig:
@@ -130,11 +120,7 @@ class GPT(nn.Module):
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
 
     def forward(self, idx, targets=None, return_logits=True):
-        b, t = idx.size()
-        pos = torch.arange(0, t, dtype=torch.long, device=idx.device) # shape (t)
-
-        # forward the GPT model itself
-        x = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        x = self.transformer.wte(idx)
 
         for block in self.transformer.h:
             x = block(x)
@@ -196,11 +182,9 @@ class DistributedDataLoader:
         self.B = B
         self.T = T
 
-        # glob files that match the pattern
         self.files = sorted(glob.glob(filename_pattern))
         assert len(self.files) > 0, f"did not find any files that match the pattern {filename_pattern}"
 
-        # load and validate all data shards, count number of tokens in total
         ntok_total = 0
         for fname in self.files:
             shard_ntok = _peek_data_shard(fname)
@@ -212,7 +196,6 @@ class DistributedDataLoader:
         self.whitelisted_tokens = np.load("topk.npy")
         self.unk = 5025
 
-        # kick things off
         self.reset()
 
     def reset(self):
@@ -236,14 +219,10 @@ class DistributedDataLoader:
         buf = torch.tensor(buf.astype(np.int32), dtype=torch.long)
         x = (buf[:-1]).view(B, T) # inputs
         y = (buf[1:]).view(B, T) # targets
-        # advance current position and load next shard if necessary
         self.current_position += B * T * self.num_processes
         if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
             self.advance()
         return x.cuda(), y.cuda()
-
-# -----------------------------------------------------------------------------
-# int main
 
 def print0(*args, **kwargs):
     # modified print that only prints from the master process
@@ -403,8 +382,6 @@ if __name__ == "__main__":
             param_group['lr'] = lr
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
-        # --------------- TRAINING SECTION END -------------------
-        # everything that follows now is just diagnostics, prints, logging, etc.
 
         torch.cuda.synchronize()
         t1 = time.perf_counter()
