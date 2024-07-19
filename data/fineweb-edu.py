@@ -28,20 +28,20 @@ def write_datafile(filename, toks):
     """
     Saves token data as a .bin file, for reading in C.
     - First comes a header with 256 int32s
-    - The tokens follow, each as a uint16
+    - The tokens follow, each as a uint32
     """
     assert len(toks) < 2**31, "token count too large" # ~2.1B tokens
     # construct the header
     header = np.zeros(256, dtype=np.int32)
     header[0] = 20240520 # magic
     header[1] = 1 # version
-    header[2] = len(toks) # number of tokens after the 256*4 bytes of header (each 2 bytes as uint16)
+    header[2] = len(toks) # number of tokens after the 256*4 bytes of header (each 2 bytes as uint32)
     # construct the tokens numpy array, if not already
-    if not isinstance(toks, np.ndarray) or not toks.dtype == np.uint16:
-        # validate that no token exceeds a uint16
+    if not isinstance(toks, np.ndarray) or not toks.dtype == np.uint32:
+        # validate that no token exceeds a uint32
         maxtok = 2**16
-        assert all(0 <= t < maxtok for t in toks), "token dictionary too large for uint16"
-        toks_np = np.array(toks, dtype=np.uint16)
+        assert all(0 <= t < maxtok for t in toks), "token dictionary too large for uint32"
+        toks_np = np.array(toks, dtype=np.uint32)
     else:
         toks_np = toks
     # write to file
@@ -59,10 +59,10 @@ args = parser.parse_args()
 # FineWeb has a few possible subsamples available
 assert args.version in ["10B", "100B"], "version must be one of 10B, 100B"
 if args.version == "10B":
-    local_dir = "fineweb10B"
+    local_dir = "fineweb_edu_10B"
     remote_name = "sample-10BT"
 elif args.version == "100B":
-    local_dir = "fineweb100B"
+    local_dir = "fineweb_edu_100B"
     remote_name = "sample-100BT"
 
 # create the cache the local directory if it doesn't exist yet
@@ -70,26 +70,26 @@ DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), local_dir)
 os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
 # download the dataset
-fw = load_dataset("HuggingFaceFW/fineweb", name=remote_name, split="train")
+fw = load_dataset("HuggingFaceFW/fineweb-edu", name=remote_name, split="train")
 
 # init the tokenizer
-enc = tiktoken.get_encoding("gpt2")
+enc = tiktoken.get_encoding("o200k_base")
 eot = enc._special_tokens['<|endoftext|>'] # end of text token
 def tokenize(doc):
-    # tokenizes a single document and returns a numpy array of uint16 tokens
+    # tokenizes a single document and returns a numpy array of uint32 tokens
     tokens = [eot] # the special <|endoftext|> token delimits all documents
     tokens.extend(enc.encode_ordinary(doc["text"]))
     tokens_np = np.array(tokens)
-    assert (0 <= tokens_np).all() and (tokens_np < 2**16).all(), "token dictionary too large for uint16"
-    tokens_np_uint16 = tokens_np.astype(np.uint16)
-    return tokens_np_uint16
+    assert (0 <= tokens_np).all() and (tokens_np < 2**16).all(), "token dictionary too large for uint32"
+    tokens_np_uint32 = tokens_np.astype(np.uint32)
+    return tokens_np_uint32
 
 # tokenize all documents and write output shards, each of shard_size tokens (last shard has remainder)
 nprocs = max(1, os.cpu_count() - 2) # don't hog the entire system
 with mp.Pool(nprocs) as pool:
     shard_index = 0
     # preallocate buffer to hold current shard
-    all_tokens_np = np.empty((args.shard_size,), dtype=np.uint16)
+    all_tokens_np = np.empty((args.shard_size,), dtype=np.uint32)
     token_count = 0
     for tokens in pool.imap(tokenize, fw, chunksize=16):
         # is there enough space in the current shard for the new tokens?
