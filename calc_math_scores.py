@@ -49,6 +49,7 @@ if __name__ == '__main__':
     end_idx = min((args.chunk_idx + 1) * chunk_size, len(ds))
     chunk = ds.select(range(start_idx, end_idx))
     print(f'{len(chunk):_} docs to process start={start_idx}, end={end_idx}')
+    print(f'{len(chunk)//32:_} batches to process')
 
     fname = f'math_scores_{args.chunk_idx}.csv'
     f = open(fname, 'w')
