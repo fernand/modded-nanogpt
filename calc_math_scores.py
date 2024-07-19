@@ -17,10 +17,10 @@ def pooling(outputs: torch.Tensor, inputs: dict) -> np.ndarray:
     return torch.sum(
         outputs * inputs["attention_mask"][:, :, None], dim=1) / torch.sum(inputs["attention_mask"])
 
-def get_embeddings(model, tokenizer, sents):
+def get_embeddings(device, model, tokenizer, sents):
     inputs = tokenizer(sents, padding=True, return_tensors='pt')
     for k, v in inputs.items():
-        inputs[k] = v.cuda()
+        inputs[k] = v.to(device)
     outputs = model(**inputs).last_hidden_state
     embeddings = pooling(outputs, inputs)
     return embeddings
@@ -41,16 +41,7 @@ if __name__ == '__main__':
     model_name = 'mixedbread-ai/mxbai-embed-large-v1'
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name).eval().bfloat16().to(device)
-    ref_embeddings = get_embeddings(model, tokenizer, REF_SENTS)
-
-    # test_sents = [
-    #     "I like apples",
-    #     "DNA strands",
-    #     "Joe Biden is President of the USA",
-    #     "The length of a rectangle is 3x + 10 feet and its width is x + 12 feet. If the perimeter of the rectangle is 76 feet, how many square feet are in the area of the rectangle?",
-    # ]
-    # embs = get_embeddings(model, tokenizer, test_sents)
-    # print(get_scores(ref_embeddings, embs))
+    ref_embeddings = get_embeddings(device, model, tokenizer, REF_SENTS)
 
     ds = load_dataset('HuggingFaceFW/fineweb-edu', name='sample-10BT', split='train')
     chunk_size = math.ceil(len(ds) / args.num_chunks)
@@ -63,7 +54,7 @@ if __name__ == '__main__':
     f = open(fname, 'w')
     for rows in tqdm(chunk.iter(batch_size=32)):
         sents = [doc[:512] for doc in rows['text']]
-        embs = get_embeddings(model, tokenizer, sents)
+        embs = get_embeddings(device, model, tokenizer, sents)
         scores = get_scores(ref_embeddings, embs)
         uuids = [get_uuid(id) for id in rows['id']]
         for uuid, score in zip(uuids, scores):
