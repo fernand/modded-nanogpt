@@ -40,7 +40,7 @@ if __name__ == '__main__':
     device = torch.device(f'cuda:{args.chunk_idx}')
     model_name = 'mixedbread-ai/mxbai-embed-large-v1'
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = torch.compile(AutoModel.from_pretrained(model_name).eval().bfloat16().to(device))
+    model = AutoModel.from_pretrained(model_name).eval().bfloat16().to(device)
     ref_embeddings = get_embeddings(model, tokenizer, REF_SENTS)
 
     # test_sents = [
