@@ -80,7 +80,7 @@ def tokenize(doc):
     tokens = [eot] # the special <|endoftext|> token delimits all documents
     tokens.extend(enc.encode_ordinary(doc["text"]))
     tokens_np = np.array(tokens)
-    assert (0 <= tokens_np).all() and (tokens_np < 2**16).all(), "token dictionary too large for uint32"
+    assert (0 <= tokens_np).all() and (tokens_np < 2**32).all(), "token dictionary too large for uint32"
     tokens_np_uint32 = tokens_np.astype(np.uint32)
     return tokens_np_uint32
 
