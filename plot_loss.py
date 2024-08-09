@@ -5,7 +5,6 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/e9067b07-f2e0-4b0d-bfbe-ca25a22e60f0.log',
-        'pylog124M_ck/9a50f70f-26a0-4efc-b586-1ee6a57d9855.log',
     ]
     plot_eval = False
     xs, ys = [], []
