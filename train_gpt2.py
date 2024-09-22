@@ -34,7 +34,7 @@ class Rotary(torch.nn.Module):
             freqs = torch.outer(t, self.inv_freq).to(x.device)
             self.cos_cached = freqs.cos()
             self.sin_cached = freqs.sin()
-        return self.cos_cached[None, :, None, :], self.sin_cached[None, :, None, :]
+        return self.cos_cached[None, :, None, :], self.sin_cached[None, :, None, :] # type: ignore
 
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4 # multihead attention
@@ -142,7 +142,7 @@ class GPT(nn.Module):
         return logits, loss
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=betas)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=betas) # type: ignore
         return optimizer
 
 # -----------------------------------------------------------------------------
@@ -225,7 +225,6 @@ def print0(*args, **kwargs):
 if __name__ == "__main__":
     import time
     import argparse
-    print0(f"Running pytorch {torch.version.__version__}")
 
     parser = argparse.ArgumentParser()
     # file system input / output
@@ -270,7 +269,7 @@ if __name__ == "__main__":
 
     tokens_per_fwdbwd = B * T * ddp_world_size
 
-    ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
+    ctx = torch.autocast(device_type='cuda', dtype=torch.bfloat16)
 
     train_loader = DistributedDataLoader(args.input_bin, B, T, ddp_rank, ddp_world_size)
     val_loader = None
