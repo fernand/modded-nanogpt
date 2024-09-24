@@ -89,16 +89,19 @@ class MLP(nn.Module):
         return x
 
 class Block(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, l):
         super().__init__()
         self.attn = CausalSelfAttention(config)
         self.mlp = MLP(config)
         self.attn_scale = (1 / math.sqrt(2 * config.n_layer))
+        self.l = l / config.n_layer
 
     def forward(self, x):
         x = x + self.attn_scale * self.attn(rmsnorm(x))
-        x = x + self.mlp(rmsnorm(x))
-        return x
+        mlp_out = self.mlp(rmsnorm(x))
+        loss = self.l * torch.abs(mlp_out).mean()
+        x = x + mlp_out
+        return x, loss
 
 @dataclass
 class GPTConfig:
@@ -114,7 +117,7 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            h = nn.ModuleList([Block(config, 1.0) for _ in range(config.n_layer)]),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
@@ -122,8 +125,10 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, return_logits=True):
         x = self.transformer.wte(idx)
 
+        l1_loss = 0.0
         for block in self.transformer.h:
-            x = block(x)
+            x, loss = block(x)
+            l1_loss += loss
         x = rmsnorm(x)
 
         if targets is not None:
@@ -139,7 +144,7 @@ class GPT(nn.Module):
         if not return_logits:
             logits = None
 
-        return logits, loss
+        return logits, loss, l1_loss
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
         optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=betas) # type: ignore
@@ -335,13 +340,17 @@ if __name__ == "__main__":
             val_loader.reset()
             with torch.no_grad():
                 val_loss = 0.0
+                l1_loss = 0.0
                 for _ in range(args.val_max_steps):
                     x_val, y_val = val_loader.next_batch()
-                    _, loss = model(x_val, y_val, return_logits=False)
+                    _, loss, l1_loss = model(x_val, y_val, return_logits=False)
                     val_loss += loss
+                    l1_loss += loss
                 dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
+                dist.all_reduce(l1_loss, op=dist.ReduceOp.AVG)
                 val_loss /= args.val_max_steps
-            print0(f"val loss {val_loss}")
+                l1_loss /= args.val_max_steps
+            print0(f"val loss {val_loss} | l1 loss {l1_loss}")
             if master_process and logfile is not None:
                 with open(logfile, "a") as f:
                     f.write("s:%d tel:%f\n" % (step, val_loss))
@@ -356,6 +365,7 @@ if __name__ == "__main__":
         # --------------- TRAINING SECTION BEGIN -----------------
         model.train()
         train_loss = torch.zeros(1).to(device)
+        l1_loss = torch.zeros(1).to(device)
         for micro_step in range(args.gradient_accumulation_steps):
             # In DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but
@@ -363,8 +373,10 @@ if __name__ == "__main__":
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == args.gradient_accumulation_steps - 1)
             with ctx:
-                _, loss = model(x, y, return_logits=False)
+                _, loss, l1_loss = model(x, y, return_logits=False)
                 train_loss += loss.detach() / args.gradient_accumulation_steps
+                l1_loss += l1_loss.detach() / args.gradient_accumulation_steps
+                loss = loss + l1_loss
             x, y = train_loader.next_batch()
             loss.backward()
 
@@ -379,8 +391,10 @@ if __name__ == "__main__":
         # the 0th iteration is often an outlier (much slower) => skip logging it
         tokens_per_second = ddp_world_size * B * T / (t1-t0)
         dist.all_reduce(train_loss, op=dist.ReduceOp.AVG)
+        dist.all_reduce(l1_loss, op=dist.ReduceOp.AVG)
         lossf = train_loss.item() # Mean loss across GPUs and micro steps
-        print0(f"step {step+1:4d}/{args.num_iterations} | train loss {lossf:.6f} | lr {lr:.2e} | ({(t1-t0)*1000:.2f} ms | {tokens_per_second:.0f} tok/s)")
+        l1_lossf = l1_loss.item()
+        print0(f"step {step+1:4d}/{args.num_iterations} | train loss {lossf:.6f} | l1_loss {l1_lossf:.6f} | lr {lr:.2e} | ({(t1-t0)*1000:.2f} ms")
         # log to logile
         if master_process and logfile is not None:
             with open(logfile, "a") as f:

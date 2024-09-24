@@ -5,6 +5,8 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/e9067b07-f2e0-4b0d-bfbe-ca25a22e60f0.log',
+        'pylog124M_l1_loss/0d496d63-2e59-4655-bd64-ff4ed9d2e5af.log', # l = 1.0 on residual
+        'pylog124M_l1_loss/e23cc435-a592-4e2c-8525-22930857215c.log', # l = 1.0 on mlp out
     ]
     plot_eval = False
     xs, ys = [], []
@@ -21,7 +23,7 @@ if __name__ == '__main__':
 
     plt.figure(figsize=(10, 6))
     for x, y in zip(xs, ys):
-        plt.plot(x[500:], y[500:])
+        plt.plot(x[:500], y[:500])
     plt.xlabel('Tokens')
     plt.ylabel('Loss')
     plt.tight_layout()
