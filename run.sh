@@ -1,6 +1,6 @@
 torchrun --standalone --nproc_per_node=2 train_gpt2.py \
-    --input_bin "data/fineweb_edu_10B/fineweb_train_*.bin" \
-    --input_val_bin "data/fineweb_edu_10B/fineweb_val_*.bin" \
+    --input_bin "data/fineweb_10B/fineweb_train_*.bin" \
+    --input_val_bin "data/fineweb_10B/fineweb_val_*.bin" \
     --output_dir pylog124M_l1_loss \
     --model d12 \
     --batch_size 16 \
