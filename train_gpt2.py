@@ -2,7 +2,6 @@ import os
 import sys
 import uuid
 import math
-import pickle
 import glob
 from dataclasses import dataclass
 
@@ -217,15 +216,6 @@ class DistributedDataLoader:
             self.advance()
         return x.cuda(), y.cuda()
 
-def weight_dimensionality(model, eps=1e-8):
-    W = model.state_dict()['module._orig_mod.transformer.h.11.mlp.c_fc.weight']
-    norms_sq = torch.linalg.norm(W, dim=1) ** 2  # Shape: (n_features,)
-    W_hat = W / (torch.linalg.norm(W, dim=1, keepdim=True) + eps)  # Shape: (n_features, dim)
-    dot_products = torch.matmul(W_hat, W.T)  # Shape: (n_features, n_features)
-    dot_products_sq = dot_products ** 2  # Shape: (n_features, n_features)
-    sum_dot_products_sq = torch.sum(dot_products_sq, dim=1)  # Shape: (n_features,)
-    return norms_sq / (sum_dot_products_sq + eps)  # Shape: (n_features,)
-
 def print0(*args, **kwargs):
     # modified print that only prints from the master process
     # if this is not a distributed run, it's just a print
@@ -352,15 +342,10 @@ if __name__ == "__main__":
                     val_loss += loss
                 dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
                 val_loss /= args.val_max_steps
-            if master_process:
-                with torch.no_grad():
-                    dimensionalities.append(weight_dimensionality(model))
-                print(f"val loss {val_loss} | dim0 {dimensionalities[-1][0].item():.3f}")
+            print0(f"val loss {val_loss}")
             if master_process and logfile is not None:
                 with open(logfile, "a") as f:
                     f.write("s:%d tel:%f\n" % (step, val_loss))
-                with open('dimensionalities.pkl', 'wb') as f:
-                    pickle.dump(dimensionalities, f)
 
         # bit confusing: we want to make sure to eval on 0th iteration
         # but also after the very last iteration. so we loop for step <= num_iterations
@@ -396,7 +381,7 @@ if __name__ == "__main__":
         tokens_per_second = ddp_world_size * B * T / (t1-t0)
         dist.all_reduce(train_loss, op=dist.ReduceOp.AVG)
         lossf = train_loss.item() # Mean loss across GPUs and micro steps
-        print0(f"step {step+1:4d}/{args.num_iterations} | train loss {lossf:.6f} | lr {lr:.2e} | {(t1-t0)*1000:.2f} ms")
+        print0(f"step {step+1:4d}/{args.num_iterations} | train loss {lossf:.6f} | lr {lr:.2e} | {(t1-t0)*1000:.0f} ms")
         # log to logile
         if master_process and logfile is not None:
             with open(logfile, "a") as f:

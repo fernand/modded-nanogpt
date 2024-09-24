@@ -5,7 +5,6 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/vanilla.log', # vanilla, fineweb
-        'pylog124M/8c18db6c-8723-4c56-9225-2a6c9b4ffb0f.log', # vanilla, fineweb, dimensionality logging
     ]
     plot_eval = False
     plot_start = True
