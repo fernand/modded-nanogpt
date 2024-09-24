@@ -5,8 +5,6 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/e9067b07-f2e0-4b0d-bfbe-ca25a22e60f0.log',
-        'pylog124M_l1_loss/0d496d63-2e59-4655-bd64-ff4ed9d2e5af.log', # l = 1.0 on residual
-        'pylog124M_l1_loss/e23cc435-a592-4e2c-8525-22930857215c.log', # l = 1.0 on mlp out, square ReLU
         'pylog124M_l1_loss/0a4aeefd-0601-49a4-a178-f2ad7b6e1a8b.log', # l = 1.0 on mlp out, ReLU
     ]
     plot_eval = False

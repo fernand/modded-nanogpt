@@ -394,7 +394,7 @@ if __name__ == "__main__":
         dist.all_reduce(l1_loss, op=dist.ReduceOp.AVG)
         lossf = train_loss.item() # Mean loss across GPUs and micro steps
         l1_lossf = l1_loss.item()
-        print0(f"step {step+1:4d}/{args.num_iterations} | train loss {lossf:.6f} | l1_loss {l1_lossf:.6f} | lr {lr:.2e} | ({(t1-t0)*1000:.2f} ms")
+        print0(f"step {step+1:4d}/{args.num_iterations} | train loss {lossf:.6f} | l1 {l1_lossf:.6f} | lr {lr:.2e} | ({(t1-t0)*1000:.2f} ms")
         # log to logile
         if master_process and logfile is not None:
             with open(logfile, "a") as f:
