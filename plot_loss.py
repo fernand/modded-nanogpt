@@ -5,7 +5,6 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/e9067b07-f2e0-4b0d-bfbe-ca25a22e60f0.log', # vanilla, fineweb
-        'pylog124M_l1_loss/1e32159e-739d-47de-8c0a-d0579389c5f1.log', # 1.0 mlp out L1 loss, fineweb
     ]
     plot_eval = False
     plot_start = True
