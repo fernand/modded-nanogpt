@@ -1,4 +1,6 @@
 # torch
+fast-hadamard-transform
+pytorch-sparse
 datasets
 numpy
 tiktoken
