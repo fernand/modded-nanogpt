@@ -83,9 +83,9 @@ class MLP(nn.Module):
         super().__init__()
         self.config = config
         self.w_up = nn.Parameter(torch.empty(4 * config.n_embd, config.N))
-        nn.init.kaiming_uniform_(self.w_up, a=math.sqrt(5))
+        nn.init.normal_(self.w_up, 0, 0.02)
         self.w_down = nn.Parameter(torch.empty(config.N, 4 * config.n_embd))
-        nn.init.kaiming_uniform_(self.w_down, a=math.sqrt(5))
+        nn.init.normal_(self.w_down, 0, 0.02)
         self.hadamard_scale = 1 / math.sqrt(self.config.N)
 
     def forward(self, x, random_sign, proj_indices, proj_values):
