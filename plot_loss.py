@@ -6,7 +6,6 @@ if __name__ == '__main__':
     logfiles = [
         'pylog124M/vanilla.log', # vanilla, fineweb
         'pylog768_fjlt/dcc13211-aa86-414e-830b-3fed8cfa7c89.log', # First FJLT with row wise sparsity calc and norm
-        'pylog768_fjlt/68e24f11-1351-42f7-bf6f-07bfb00d4d18.log', # FJLT N=1024 official version with q
         'pylog768_fjlt/764f763b-3303-4c92-a170-cdc541eaafd4.log', # FJLT N=1024 with q but row wise sparsity and norm
     ]
     plot_eval = False

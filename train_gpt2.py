@@ -121,13 +121,16 @@ class GPTConfig:
     N: int = 1024
 
 class GPT(nn.Module):
-    def create_sparse_proj(self, n_embd, N, k):
+    # Create the sparse projection row-wise instead of doing directly the whole matrix.
+    # Use the sparsity number to normalize each row.
+    # This works better than the FJLT variance scaling since we can normalize each row separately.
+    def create_sparse_proj(self, n_embd, N, sparsity):
         indices = []
         for row in range(n_embd):
-            cols = torch.randperm(N)[:k].tolist()
+            cols = torch.randperm(N)[:sparsity].tolist()
             indices.extend([(row, col) for col in cols])
         indices = torch.tensor(indices).t()  # Shape: (2, nnz)
-        values = torch.randn(n_embd * k) / torch.sqrt(torch.tensor(k, dtype=torch.float32))
+        values = torch.randn(n_embd * sparsity) / torch.sqrt(torch.tensor(sparsity, dtype=torch.float32))
         indices, values = torch_sparse.coalesce(indices, values, n_embd, N)
         return indices, values
 
@@ -135,9 +138,9 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         q = min(math.pow((math.log(4 * config.n_embd)), 2) / config.N, 1)
-        k = round(q * config.N / 16) * 16
+        sparsity = round(q * config.N / 16) * 16
         self.register_buffer('random_sign', torch.randint(0, 2, (config.N,)).float() * 2 - 1)
-        proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, k)
+        proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, sparsity)
         self.register_buffer('proj_indices', proj_indices)
         self.register_buffer('proj_values', proj_values)
         self.transformer = nn.ModuleDict(dict(
