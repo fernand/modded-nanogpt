@@ -13,6 +13,8 @@ import torch.nn.functional as F
 import torch._inductor.config as config
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
+import torch_sparse
+from fast_hadamard_transform import hadamard_transform
 
 with open(sys.argv[0]) as f:
     code = f.read()
@@ -79,14 +81,20 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.config = config
+        self.w_up = nn.Parameter(torch.empty(4 * config.n_embd, config.N))
+        nn.init.kaiming_uniform_(self.w_up, a=math.sqrt(5))
+        self.w_down = nn.Parameter(torch.empty(config.N, 4 * config.n_embd))
+        nn.init.kaiming_uniform_(self.w_down, a=math.sqrt(5))
 
-    def forward(self, x):
-        x = self.c_fc(x)
+    def forward(self, x, random_sign, proj_indices, proj_values):
+        up = torch_sparse.spmm(
+            proj_indices, proj_values, self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_up).T)
+        x = x @ up
         x = F.gelu(x)
-        x = self.c_proj(x)
-        return x
+        down = torch_sparse.spmm(
+            proj_indices, proj_values, self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_down.T).T)
+        return x @ down.T
 
 class Block(nn.Module):
     def __init__(self, config):
@@ -95,9 +103,9 @@ class Block(nn.Module):
         self.mlp = MLP(config)
         self.attn_scale = (1 / math.sqrt(2 * config.n_layer))
 
-    def forward(self, x):
+    def forward(self, x, random_sign, proj_indices, proj_values):
         x = x + self.attn_scale * self.attn(rmsnorm(x))
-        x = x + self.mlp(rmsnorm(x))
+        x = x + self.mlp(rmsnorm(x), random_sign, proj_indices, proj_values)
         return x
 
 @dataclass
@@ -106,12 +114,27 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
+    N: int = 1024
 
 class GPT(nn.Module):
+    def create_sparse_proj(self, n_embd, N, k):
+        indices = []
+        for row in range(n_embd):
+            cols = torch.randperm(N)[:k].tolist()
+            indices.extend([(row, col) for col in cols])
+        indices = torch.tensor(indices).t()  # Shape: (2, nnz)
+        values = torch.randn(n_embd * k) / torch.sqrt(torch.tensor(N, dtype=torch.float32))
+        indices, values = torch_sparse.coalesce(indices, values, n_embd, N)
+        return indices, values
+
     def __init__(self, config):
         super().__init__()
         self.config = config
-
+        k = 32 # 3% sparsity on 1024
+        self.register_buffer('random_sign', torch.randint(0, 2, (config.N,)).float() * 2 - 1)
+        proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, k)
+        self.register_buffer('proj_indices', proj_indices)
+        self.register_buffer('proj_values', proj_values)
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
@@ -123,7 +146,7 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
 
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, self.random_sign, self.proj_indices, self.proj_values)
         x = rmsnorm(x)
 
         if targets is not None:
@@ -250,7 +273,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     B, T = args.batch_size, args.sequence_length
-    assert args.model in {"d12", "d24", "d36", "d48"}
 
     # set up DDP (distributed data parallel). torchrun sets this env variable
     # use of DDP atm demands CUDA, we set the device appropriately according to rank
@@ -279,10 +301,8 @@ if __name__ == "__main__":
 
     num_vocab = 50257
     model_config = {
-        "d12": GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=12, n_embd=768),
-        "d24": GPTConfig(vocab_size=num_vocab, n_layer=24, n_head=16, n_embd=1024),
-        "d36": GPTConfig(vocab_size=num_vocab, n_layer=36, n_head=20, n_embd=1280),
-        "d48": GPTConfig(vocab_size=num_vocab, n_layer=48, n_head=25, n_embd=1600),
+        "d12_384": GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=6, n_embd=384, N=1024),
+        "d12": GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=12, n_embd=768, N=1024),
     }[args.model]
     model = GPT(model_config)
     model = model.train().cuda()
