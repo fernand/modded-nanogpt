@@ -86,17 +86,18 @@ class MLP(nn.Module):
         nn.init.kaiming_uniform_(self.w_up, a=math.sqrt(5))
         self.w_down = nn.Parameter(torch.empty(config.N, 4 * config.n_embd))
         nn.init.kaiming_uniform_(self.w_down, a=math.sqrt(5))
+        self.hadamard_scale = 1 / math.sqrt(self.config.N)
 
     def forward(self, x, random_sign, proj_indices, proj_values):
         up = torch_sparse.spmm(
             proj_indices, proj_values,
-            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_up, 1 / math.sqrt(self.config.N)).T
+            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_up, self.hadamard_scale).T
         )
         x = x @ up
         x = F.gelu(x)
         down = torch_sparse.spmm(
             proj_indices, proj_values,
-            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_down.T, 1 / math.sqrt(self.config.N)).T
+            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_down.T, self.hadamard_scale).T
         )
         return x @ down.T
 
