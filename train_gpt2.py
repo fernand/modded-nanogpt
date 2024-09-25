@@ -79,25 +79,43 @@ class CausalSelfAttention(nn.Module):
         return y
 
 class MLP(nn.Module):
+    def create_sparse_w(self, n_embd, N, sparsity):
+        indices = []
+        for row in range(n_embd):
+            cols = torch.randperm(N)[:sparsity].tolist()
+            # Convert 2D indices to 1D indices
+            indices.extend([row * N + col for col in cols])
+        indices = torch.tensor(indices, dtype=torch.long)  # Shape: (n_embd * sparsity,)
+        values = torch.randn(n_embd * sparsity) * 0.02
+        return indices, values
+
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.w_up = nn.Parameter(torch.empty(4 * config.n_embd, config.N))
-        nn.init.normal_(self.w_up, 0, 0.02)
-        self.w_down = nn.Parameter(torch.empty(config.N, 4 * config.n_embd))
-        nn.init.normal_(self.w_down, 0, 0.02)
+        wup_indices, wup_values = self.create_sparse_w(4 * config.n_embd, config.N, config.sparsity)
+        self.register_buffer('wup_indices', wup_indices)
+        self.wup_values = nn.Parameter(wup_values)
+        wdown_indices, wdown_values = self.create_sparse_w(4 * config.n_embd, config.N, config.sparsity)
+        self.register_buffer('wdown_indices', wdown_indices)
+        self.wdown_values = nn.Parameter(wdown_values)
         self.hadamard_scale = 1 / math.sqrt(self.config.N)
 
     def forward(self, x, random_sign, proj_indices, proj_values):
+        dense_wup = torch.zeros((4*self.config.n_embd*self.config.N,), device=self.wup_values.device, dtype=self.wup_values.dtype)
+        dense_wup.scatter_(0, self.wup_indices, self.wup_values)
+        dense_wup = dense_wup.view(4 * self.config.n_embd, self.config.N)
         up = torch_sparse.spmm(
             proj_indices, proj_values,
-            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_up, self.hadamard_scale).T
+            self.config.n_embd, self.config.N, hadamard_transform(random_sign * dense_wup, self.hadamard_scale).T
         )
         x = x @ up
         x = F.gelu(x)
+        dense_wdown = torch.zeros((4*self.config.n_embd*self.config.N,), device=self.wdown_values.device, dtype=self.wdown_values.dtype)
+        dense_wdown.scatter_(0, self.wdown_indices, self.wdown_values)
+        dense_wdown = dense_wdown.view(4 * self.config.n_embd, self.config.N)
         down = torch_sparse.spmm(
             proj_indices, proj_values,
-            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_down.T, self.hadamard_scale).T
+            self.config.n_embd, self.config.N, hadamard_transform(random_sign * dense_wdown, self.hadamard_scale).T
         )
         return x @ down.T
 
@@ -119,19 +137,20 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
-    N: int = 1024
+    N: int = 1600
+    sparsity: int = 384
 
 class GPT(nn.Module):
     # Create the sparse projection row-wise instead of doing directly the whole matrix.
     # Use the sparsity number to normalize each row.
     # This works better than the FJLT variance scaling since we can normalize each row separately.
-    def create_sparse_proj(self, n_embd, N, sparsity):
+    def create_sparse_proj(self, n_embd, N, proj_sparsity):
         indices = []
         for row in range(n_embd):
-            cols = torch.randperm(N)[:sparsity].tolist()
+            cols = torch.randperm(N)[:proj_sparsity].tolist()
             indices.extend([(row, col) for col in cols])
         indices = torch.tensor(indices).t()  # Shape: (2, nnz)
-        values = torch.randn(n_embd * sparsity) / torch.sqrt(torch.tensor(sparsity, dtype=torch.float32))
+        values = torch.randn(n_embd * proj_sparsity) / torch.sqrt(torch.tensor(proj_sparsity, dtype=torch.float32))
         indices, values = torch_sparse.coalesce(indices, values, n_embd, N)
         return indices, values
 
@@ -139,9 +158,9 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         q = min(math.pow((math.log(4 * config.n_embd)), 2) / config.N, 1)
-        sparsity = round(q * config.N / 16) * 16
+        proj_sparsity = round(q * config.N / 16) * 16
         self.register_buffer('random_sign', torch.randint(0, 2, (config.N,)).float() * 2 - 1)
-        proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, sparsity)
+        proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, proj_sparsity)
         self.register_buffer('proj_indices', proj_indices)
         self.register_buffer('proj_values', proj_values)
         self.transformer = nn.ModuleDict(dict(
@@ -317,7 +336,7 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('high')
     if hasattr(config, "coordinate_descent_tuning"):
         config.coordinate_descent_tuning = True # suggested by @Chillee
-    model = torch.compile(model)
+    # model = torch.compile(model)
 
     model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module # always contains the "raw" unwrapped model
