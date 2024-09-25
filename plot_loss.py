@@ -5,8 +5,8 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/vanilla.log', # vanilla, fineweb
-        'pylog768_fjlt/9549a830-7f38-4439-997c-444ce9919d43.log', # FJLT N=1024 Orig init k=32
         'pylog768_fjlt/96237f38-7f93-4801-bf63-9a33444f42f1.log', # FJLT N=1024 Correct init, use q
+        'pylog768_fjlt/68e24f11-1351-42f7-bf6f-07bfb00d4d18.log', # FJLT N=1024 Correct init, use q, fix scale
     ]
     plot_eval = False
     plot_start = True
