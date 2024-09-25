@@ -88,7 +88,7 @@ class MLP(nn.Module):
             indices.extend([row * N + col for col in cols])
             indices.extend([row * N + col for col in shared_cols])
         indices = torch.tensor(indices, dtype=torch.long)
-        values = torch.randn(n_embd * sparsity) * 0.02
+        values = torch.randn(n_embd * (sparsity + 128)) * 0.02
         return indices, values
 
     def __init__(self, config):
