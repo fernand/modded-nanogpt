@@ -80,11 +80,13 @@ class CausalSelfAttention(nn.Module):
 
 class MLP(nn.Module):
     def create_sparse_w(self, n_embd, N, sparsity):
+        shared_cols = torch.randperm(N)[:128].tolist()
         indices = []
         for row in range(n_embd):
             cols = torch.randperm(N)[:sparsity].tolist()
             # Convert 2D indices to 1D indices
             indices.extend([row * N + col for col in cols])
+            indices.extend([row * N + col for col in shared_cols])
         indices = torch.tensor(indices, dtype=torch.long)
         values = torch.randn(n_embd * sparsity) * 0.02
         return indices, values
