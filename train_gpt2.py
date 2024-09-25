@@ -301,7 +301,6 @@ if __name__ == "__main__":
 
     num_vocab = 50257
     model_config = {
-        "d12_384": GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=6, n_embd=384, N=1024),
         "d12": GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=12, n_embd=768, N=1024),
     }[args.model]
     model = GPT(model_config)
