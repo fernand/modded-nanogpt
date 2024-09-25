@@ -19,6 +19,34 @@ from fast_hadamard_transform import hadamard_transform
 with open(sys.argv[0]) as f:
     code = f.read()
 
+def calculate_q(d, n, eps, p=2):
+    '''
+    Calculates the variance `q` of the Gaussian normal
+    distriubtion N(0,q^(-1)) for the k x d matrix P of the FJLT.
+
+    Parameters
+    ----------
+    d : int greater than 0,
+        Number of components in the vector.
+    n : int greater than 0.
+        Number of all samples (i.e. k x d).
+    eps : float or numpy array of float in [0,1].
+        Maximum distortion rate as defined by the Johnson-Lindenstrauss lemma.
+        If an array is given, it will compute a safe number of components
+        array-wise.
+    p : int of {1,2},
+        The type of embedding desired: L1 or L2,
+        therefore p = 1 or 2, respectively.
+
+    Returns
+    -------
+    q : float greater than 0,
+        Variance of the of the Gaussian normal distriubtion
+        N(0,q^(-1)) for the k x d matrix P of the FJLT (Rho = PHD).
+    '''
+    q_calc = (math.pow(eps, (p-2)) * (math.pow((math.log(n)), p))) / d
+    return min([q_calc, 1])
+
 class Rotary(torch.nn.Module):
     def __init__(self, dim, base=10000):
         super().__init__()
@@ -133,8 +161,8 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        k = 2**16
-        q = 0.063
+        q = calculate_q(config.N, 4 * config.n_embd, 0.01)
+        k = round(q * config.n_embd * config.N / 16) * 16
         self.register_buffer('random_sign', torch.randint(0, 2, (config.N,)).float() * 2 - 1)
         proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, k, q)
         self.register_buffer('proj_indices', proj_indices)
