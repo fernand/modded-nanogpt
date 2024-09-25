@@ -4,9 +4,8 @@ TOKENS_PER_STEP = 524288
 
 if __name__ == '__main__':
     logfiles = [
-        'pylog124M/vanilla.log', # vanilla, fineweb
-        'pylog768_fjlt/764f763b-3303-4c92-a170-cdc541eaafd4.log', # FJLT N=1024 with q but row wise sparsity and norm
-        'pylog768_fjlt/376a0c1f-f20f-43ec-ac9b-f36798c21212.log', # FJLT N=8192 sparsity 384 with q but row wise sparsity and norm, N(0, 0.02) init
+        'pylog124M/vanilla.log', # vanilla dim 768, fineweb
+        'pylog768_fjlt/1c145bfc-dc6a-47ed-a964-4a42c0a65e38.log', # FJLT N=131072 sparsity 768
     ]
     plot_eval = False
     plot_start = True
