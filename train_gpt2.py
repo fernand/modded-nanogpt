@@ -90,13 +90,13 @@ class MLP(nn.Module):
     def forward(self, x, random_sign, proj_indices, proj_values):
         up = torch_sparse.spmm(
             proj_indices, proj_values,
-            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_up, 1 / self.config.N).T
+            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_up, 1 / math.sqrt(self.config.N)).T
         )
         x = x @ up
         x = F.gelu(x)
         down = torch_sparse.spmm(
             proj_indices, proj_values,
-            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_down.T, 1 / self.config.N).T
+            self.config.n_embd, self.config.N, hadamard_transform(random_sign * self.w_down.T, 1 / math.sqrt(self.config.N)).T
         )
         return x @ down.T
 
