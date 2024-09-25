@@ -121,12 +121,13 @@ class GPTConfig:
     N: int = 1024
 
 class GPT(nn.Module):
-    def create_sparse_proj(self, n_embd, N, k, q):
-        flat_indices = torch.randperm(n_embd * N, dtype=torch.long)[:k]
-        row_indices = flat_indices // N
-        col_indices = flat_indices % N
-        indices = torch.stack([row_indices, col_indices], dim=0)
-        values = torch.randn((k,)) / q
+    def create_sparse_proj(self, n_embd, N, k):
+        indices = []
+        for row in range(n_embd):
+            cols = torch.randperm(N)[:k].tolist()
+            indices.extend([(row, col) for col in cols])
+        indices = torch.tensor(indices).t()  # Shape: (2, nnz)
+        values = torch.randn(n_embd * k) / torch.sqrt(torch.tensor(k, dtype=torch.float32))
         indices, values = torch_sparse.coalesce(indices, values, n_embd, N)
         return indices, values
 
@@ -134,9 +135,9 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         q = min(math.pow((math.log(4 * config.n_embd)), 2) / config.N, 1)
-        k = round(q * config.n_embd * config.N / 16) * 16
+        k = round(q * config.N / 16) * 16
         self.register_buffer('random_sign', torch.randint(0, 2, (config.N,)).float() * 2 - 1)
-        proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, k, q)
+        proj_indices, proj_values = self.create_sparse_proj(config.n_embd, config.N, k)
         self.register_buffer('proj_indices', proj_indices)
         self.register_buffer('proj_values', proj_values)
         self.transformer = nn.ModuleDict(dict(
