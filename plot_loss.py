@@ -5,7 +5,7 @@ TOKENS_PER_STEP = 524288
 if __name__ == '__main__':
     logfiles = [
         'pylog124M/vanilla.log', # vanilla dim 768, fineweb
-        'pylog768_fjlt/1c145bfc-dc6a-47ed-a964-4a42c0a65e38.log', # FJLT N=131072 sparsity 768
+        'pylog768_fjlt/deedd85a-3f10-4a0f-9aa4-9de1b0211629.log', # FJLT N=32768 sparsity 16 separate random proj per MLP frozen MLP
     ]
     plot_eval = False
     plot_start = True
