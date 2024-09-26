@@ -137,7 +137,7 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
-    N: int = 2**17
+    N: int = 32768
     sparsity: int = 768
 
 class GPT(nn.Module):
