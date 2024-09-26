@@ -98,7 +98,9 @@ class MLP(nn.Module):
             cols = torch.randperm(N)[:sparsity].tolist()
             # Convert 2D indices to 1D indices
             indices.extend([row * N + col for col in cols])
-        return torch.tensor(indices, dtype=torch.long)
+        indices = torch.tensor(indices, dtype=torch.long)
+        values = torch.randn(n_embd * sparsity) * 0.02
+        return indices, values
 
     def __init__(self, config):
         super().__init__()
@@ -111,15 +113,17 @@ class MLP(nn.Module):
         self.register_buffer('proj_indices', proj_indices)
         self.register_buffer('proj_values', proj_values)
 
-        wup_indices = self.create_sparse_w(4 * config.n_embd, config.N, config.sparsity)
+        wup_indices, wup_values = self.create_sparse_w(4 * config.n_embd, config.N, config.sparsity)
         self.register_buffer('wup_indices', wup_indices)
-        wdown_indices = self.create_sparse_w(4 * config.n_embd, config.N, config.sparsity)
+        self.wup_values = nn.Parameter(wup_values)
+        wdown_indices, wdown_values = self.create_sparse_w(4 * config.n_embd, config.N, config.sparsity)
         self.register_buffer('wdown_indices', wdown_indices)
+        self.wdown_values = nn.Parameter(wdown_values)
         self.hadamard_scale = 1 / math.sqrt(self.config.N)
 
     def forward(self, x):
-        dense_wup = torch.zeros((4*self.config.n_embd*self.config.N,), device=self.proj_values.device, dtype=self.proj_values.dtype)
-        dense_wup.scatter_(0, self.wup_indices, 1)
+        dense_wup = torch.zeros((4*self.config.n_embd*self.config.N,), device=self.wup_values.device, dtype=self.wup_values.dtype)
+        dense_wup.scatter_(0, self.wup_indices, self.wup_values)
         dense_wup = dense_wup.view(4 * self.config.n_embd, self.config.N)
         up = torch_sparse.spmm(
             self.proj_indices, self.proj_values,
@@ -127,8 +131,8 @@ class MLP(nn.Module):
         )
         x = x @ up
         x = F.gelu(x)
-        dense_wdown = torch.zeros((4*self.config.n_embd*self.config.N,), device=self.proj_values.device, dtype=self.proj_values.dtype)
-        dense_wdown.scatter_(0, self.wdown_indices, 1)
+        dense_wdown = torch.zeros((4*self.config.n_embd*self.config.N,), device=self.wdown_values.device, dtype=self.wdown_values.dtype)
+        dense_wdown.scatter_(0, self.wdown_indices, self.wdown_values)
         dense_wdown = dense_wdown.view(4 * self.config.n_embd, self.config.N)
         down = torch_sparse.spmm(
             self.proj_indices, self.proj_values,
@@ -155,7 +159,7 @@ class GPTConfig:
     n_head: int = 12
     n_embd: int = 768
     N: int = 32768
-    sparsity: int = 16
+    sparsity: int = 384
 
 class GPT(nn.Module):
     def __init__(self, config):

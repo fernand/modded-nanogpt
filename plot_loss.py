@@ -6,6 +6,7 @@ if __name__ == '__main__':
     logfiles = [
         'pylog124M/vanilla.log', # vanilla dim 768, fineweb
         'pylog768_fjlt/deedd85a-3f10-4a0f-9aa4-9de1b0211629.log', # FJLT N=32768 sparsity 16 separate random proj per MLP frozen MLP
+        'pylog_fjlt/410f157d-9aee-40f0-aa3f-8e1e18f088d7.log', # FJLT N=32768 sparsity 384 separate random proj per MLP
     ]
     plot_eval = False
     plot_start = True
