@@ -151,7 +151,7 @@ class GPT(nn.Module):
             cols = torch.randperm(N)[:proj_sparsity].tolist()
             indices.extend([(row, col) for col in cols])
         indices = torch.tensor(indices).t()  # Shape: (2, nnz)
-        values = torch.randn(n_embd * proj_sparsity) / torch.sqrt(torch.tensor(proj_sparsity, dtype=torch.float32))
+        values = torch.randn(n_embd * proj_sparsity) * 1 / math.sqrt(proj_sparsity)
         indices, values = torch_sparse.coalesce(indices, values, n_embd, N)
         return indices, values
 
