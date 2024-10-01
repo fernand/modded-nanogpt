@@ -285,7 +285,7 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('high')
     if hasattr(config, "coordinate_descent_tuning"):
         config.coordinate_descent_tuning = True # suggested by @Chillee
-    # model = torch.compile(model)
+    model = torch.compile(model)
 
     model = DDP(model, device_ids=[ddp_local_rank])
     raw_model = model.module # always contains the "raw" unwrapped model
