@@ -14,6 +14,8 @@ import torch._inductor.config as config
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
+from plot_loss import plot_loss
+
 with open(sys.argv[0]) as f:
     code = f.read()
 
@@ -382,6 +384,7 @@ if __name__ == "__main__":
         if master_process and logfile is not None:
             with open(logfile, "a") as f:
                 f.write("s:%d trl:%f\n" % (step, lossf))
+            plot_loss(logfile)
 
         # keep track of smooth timings, last 20 iterations
         if step > 0 and step > args.num_iterations - 20:

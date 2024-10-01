@@ -2,12 +2,11 @@ import matplotlib.pyplot as plt
 
 TOKENS_PER_STEP = 524288
 
-if __name__ == '__main__':
+def plot_loss(curr_logfile):
     logfiles = [
         'pylog124M/vanilla.log', # vanilla dim 768, fineweb
-        'pylog_fjlt/3d3148e8-eccc-4967-a28d-91ab1857a313.log', # Random weights
-        'pylog_fjlt/d6ddd722-f3a1-4e6d-8829-f74c27794558.log', # 8096 frozen
     ]
+    logfiles.append(curr_logfile)
     plot_eval = False
     plot_start = True
     xs, ys = [], []
@@ -37,3 +36,4 @@ if __name__ == '__main__':
     plt.ylabel('Loss')
     plt.tight_layout()
     plt.savefig('loss.png')
+    plt.close()
