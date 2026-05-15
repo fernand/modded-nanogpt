@@ -12,7 +12,6 @@ from torch.optim import AdamW
 import torch.nn.functional as F
 import torch.distributed as dist
 
-
 ########################################
 #              Dataloader              #
 ########################################
@@ -333,7 +332,7 @@ for _ in range(num_trials):
             dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
             val_loss /= val_tokens
             print0(f"step:{step}/{train_steps} val_loss:{val_loss:.5f} train_time:{training_time:.3f}s"
-                   + f" step_avg:{1000*step_avg:.2f}ms", console=True)
+                   + f" step_avg:{step_avg:.2f}s", console=True)
             model.train()
             # start the clock again
             dist.barrier()
@@ -358,6 +357,6 @@ for _ in range(num_trials):
         model.zero_grad(set_to_none=True)
         approx_training_time = training_time + (time.perf_counter() - t0)
         print0(f"step:{step+1}/{train_steps} train_time:{approx_training_time:.3f}s"
-               + f" step_avg:{1000*approx_training_time/(step + 1):.2f}ms", console=True, log=False)
+               + f" step_avg:{approx_training_time/(step + 1):.2f}s", console=True, log=False)
 
 dist.destroy_process_group()
