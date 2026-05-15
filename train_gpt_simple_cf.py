@@ -197,12 +197,12 @@ def muon_update_preserve_grad(grad, momentum, mu=0.95, nesterov=True):
 
 class Muon(torch.optim.Optimizer):
     # Fixed constants, not intended as tuning knobs.
-    _CF_TARGET_RHO = 1.60 # below EOS=2, leaving stochastic-training margin
-    _CF_EMA = 0.90
-    _CF_MIN_MULT = 0.60 # conservative guardrails around the tuned base LR
-    _CF_MAX_MULT = 1.10
-    _CF_RHO_CAP = 4.00
-    _CF_RHO_FLOOR = 0.05
+    CF_TARGET_RHO = 1.90 # below EOS=2, leaving stochastic-training margin
+    CF_EMA = 0.90
+    CF_MIN_MULT = 0.60 # conservative guardrails around the tuned base LR
+    CF_MAX_MULT = 1.60
+    CF_RHO_CAP = 4.00
+    CF_RHO_FLOOR = 0.05
 
     def __init__(self, params, lr=0.02, weight_decay=0, mu=0.95, cf_probe_interval=0):
         assert isinstance(params, list) and len(params) >= 1 and isinstance(params[0], torch.nn.Parameter)
@@ -219,7 +219,7 @@ class Muon(torch.optim.Optimizer):
 
             # Dynamic central-flow state.
             cf_lr_mult=1.0,
-            cf_rho_ema=self._CF_TARGET_RHO,
+            cf_rho_ema=self.CF_TARGET_RHO,
             cf_last_rho=float("nan"),
         )
         super().__init__(params, defaults)
@@ -245,25 +245,25 @@ class Muon(torch.optim.Optimizer):
         if not torch.isfinite(rho):
             return None
 
-        rho_f = float(rho.clamp(0.0, self._CF_RHO_CAP).item())
+        rho_f = float(rho.clamp(0.0, self.CF_RHO_CAP).item())
 
         for group in self.param_groups:
             group["cf_last_rho"] = rho_f
 
             rho_ema = (
-                self._CF_EMA * group["cf_rho_ema"]
-                + (1 - self._CF_EMA) * rho_f
+                self.CF_EMA * group["cf_rho_ema"]
+                + (1 - self.CF_EMA) * rho_f
             )
             group["cf_rho_ema"] = rho_ema
 
             # Direct thermostat:
             # locally rho is approximately linear in LR, so sqrt gives a
             # damped one-step correction without exposing a gain hyperparameter.
-            correction = math.sqrt(self._CF_TARGET_RHO / max(rho_ema, self._CF_RHO_FLOOR))
+            correction = math.sqrt(self.CF_TARGET_RHO / max(rho_ema, self.CF_RHO_FLOOR))
             group["cf_lr_mult"] = self._clamp(
                 group["cf_lr_mult"] * correction,
-                self._CF_MIN_MULT,
-                self._CF_MAX_MULT,
+                self.CF_MIN_MULT,
+                self.CF_MAX_MULT,
             )
 
         return rho
@@ -397,7 +397,7 @@ for _ in range(num_trials):
     optimizer2 = Muon(
         [p for p in model.blocks.parameters() if p.ndim >= 2],
         lr=0.025, weight_decay=0.025,
-        cf_probe_interval=50,   # the only new practical setting; 0 disables
+        cf_probe_interval=25,
     )
     optimizers = [optimizer1, optimizer2]
     assert set(p for opt in optimizers for group in opt.param_groups
@@ -469,22 +469,30 @@ for _ in range(num_trials):
         # accumulate across microbatches in case we are running with fewer than 8 gpus
         assert len(inputs) % mbs == 0
 
-        train_loss_before = torch.zeros((), device=device) if do_cf_probe else None
+        train_loss_sum = torch.zeros((), device=device)
+        cf_loss_before = torch.zeros((), device=device) if do_cf_probe else None
 
         for i in range(len(inputs) // mbs):
             loss = model(inputs[i*mbs:(i+1)*mbs], targets[i*mbs:(i+1)*mbs])
+            train_loss_sum += loss.detach()
             if do_cf_probe:
-                train_loss_before += loss.detach()
+                cf_loss_before += loss.detach()
             loss.backward()
 
         for name, p in model.named_parameters():
             assert p.grad is not None, name
             dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
 
+        dist.all_reduce(train_loss_sum, op=dist.ReduceOp.SUM)
+        train_loss = train_loss_sum / batch_size
+
         if do_cf_probe:
-            dist.all_reduce(train_loss_before, op=dist.ReduceOp.SUM)
+            dist.all_reduce(cf_loss_before, op=dist.ReduceOp.SUM)
 
         set_hparams(step)
+        cf = optimizer2.param_groups[0]
+        cf_mult_before = cf["cf_lr_mult"]
+        muon_lr = cf["lr"]
 
         # Muon and AdamW touch disjoint parameters.
         # Step Muon first so the probe isolates the Muon-only loss change.
@@ -496,13 +504,27 @@ for _ in range(num_trials):
                 for i in range(len(inputs) // mbs):
                     muon_loss_after += model(inputs[i*mbs:(i+1)*mbs], targets[i*mbs:(i+1)*mbs])
             dist.all_reduce(muon_loss_after, op=dist.ReduceOp.SUM)
-            optimizer2.observe_loss(train_loss_before, muon_loss_after)
+            cf_pred_decrease = optimizer2.cf_last_pred_decrease
+            cf_actual_decrease = cf_loss_before - muon_loss_after
+            cf_rho_raw = optimizer2.observe_loss(cf_loss_before, muon_loss_after)
+            cf_rho_raw_f = float("nan") if cf_rho_raw is None else cf_rho_raw.item()
+            print0(f"cf_probe step:{step+1}/{train_steps}"
+                   + f" muon_lr:{muon_lr:.6g}"
+                   + f" cf_mult:{cf_mult_before:.3f}->{cf['cf_lr_mult']:.3f}"
+                   + f" rho_raw:{cf_rho_raw_f:.3f}"
+                   + f" rho_ema:{cf['cf_rho_ema']:.3f}"
+                   + f" pred_dec/tok:{(cf_pred_decrease / batch_size).item():.5e}"
+                   + f" actual_dec/tok:{(cf_actual_decrease / batch_size).item():.5e}"
+                   + f" loss_before:{(cf_loss_before / batch_size).item():.5f}"
+                   + f" loss_after_muon:{(muon_loss_after / batch_size).item():.5f}",
+                   console=True)
 
         optimizer1.step()
 
         model.zero_grad(set_to_none=True)
         approx_training_time = training_time + (time.perf_counter() - t0)
-        print0(f"step:{step+1}/{train_steps} train_time:{approx_training_time:.3f}s"
+        print0(f"step:{step+1}/{train_steps} train_loss:{train_loss.item():.5f}"
+               + f" train_time:{approx_training_time:.3f}s"
                + f" step_avg:{approx_training_time/(step + 1):.2f}s", console=True, log=False)
 
 dist.destroy_process_group()
